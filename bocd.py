@@ -5,17 +5,99 @@ import jax
 import chex
 import jax.numpy as jnp
 from functools import partial
-from jaxtyping import Float, Array
+from jaxtyping import Float, Array, PyTree
 
 @chex.dataclass
 class BOCPDState:
-    time: int
-    param_eta: float # Count hyperparameter
-    param_chi: float # Sufficient statistic hyperparameter
+    T: int # total number of time steps
+    params_expfam: Float[PyTree, "T M"] # Params of the predictive distribution
     log_evidence: Float[Array, "T"]
     log_joint: Float[Array, "T"]
-    suff_stats: Float[Array, "T M"]
-    total_time: int # Total number of time steps (For jax scan)
+    time: int = 0
+
+
+@chex.dataclass
+class GaussParams:
+    chi: float
+    nu: float
+
+    @property
+    def mu(self):
+        return self.chi / self.nu
+    
+    @property
+    def sigma2(self):
+        return 1 / self.nu
+
+    @classmethod
+    def from_org(cls, mean, variance):
+        chi = mean / variance
+        nu = 1 / variance
+        return cls(chi=chi, nu=nu)
+    
+
+class ExpfamGaussConj:
+    """
+    Exponential family Gaussian conjugate prior
+    for the mean of a Gaussian likelihood
+    with known variance.
+    """
+    def __init__(self, variance):
+        self.variance = variance
+
+    def suff_stat(self, x):
+        Tx = jnp.array([x / self.variance])
+        return Tx
+    
+    def natural_params(self, params):
+        mu = params.mu
+        return jnp.array([mu])
+    
+    def log_partition(self, params):
+        A_eta = params.mu / (2 * self.variance)
+        
+        return A_eta
+    
+    def base_measure(self, x):
+        hx = jnp.exp(-x**2 / (2 * self.variance))
+        hx = hx / jnp.sqrt(2 * jnp.pi * self.variance)
+        return hx
+    
+    def log_pdf(self, params, x):
+        hx = self.base_measure(x)
+        Tx = self.suff_stat(x)
+        A_eta = self.log_partition(params)
+        
+        lpdf = jnp.log(hx) + Tx * params.chi + params.nu * A_eta
+        return lpdf
+    
+    def pdf(self, params, x):
+        return jnp.exp(self.log_pdf(params, x))
+
+    def update_params(self, params, x):
+        Tx = self.suff_stat(x)
+        chi_new = params.chi + Tx
+        nu_new = params.nu + 1
+
+        params_new = GaussParams(chi=chi_new, nu=nu_new)
+        return params_new
+
+
+def init_bocd_state(num_timesteps, params_init):
+    log_evidence = jnp.zeros(num_timesteps)
+    log_joint = jnp.zeros(num_timesteps)
+    M = len(params_init)
+    
+    params_init = params_init.to_array()
+    params = jnp.zeros((num_timesteps, M))
+    params = params.at[0].set(params_init)
+
+    return BOCPDState(
+        T=num_timesteps,
+        log_evidence=log_evidence,
+        log_joint=log_joint,
+        params_expfam=params,
+    )
 
 
 @partial(jax.jit, static_argnames=("T",))
