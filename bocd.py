@@ -21,6 +21,9 @@ class GaussParams:
     chi: float
     nu: float
 
+    def __len__(self):
+        return 2
+
     @property
     def mu(self):
         return self.chi / self.nu
@@ -34,7 +37,15 @@ class GaussParams:
         chi = mean / variance
         nu = 1 / variance
         return cls(chi=chi, nu=nu)
+
+    @classmethod
+    def from_array(cls, params):
+        return cls(chi=params[0], nu=params[1])
     
+    @property
+    def array(self):
+        return jnp.array([self.chi, self.nu])
+
 
 class ExpfamGaussConj:
     """
@@ -88,7 +99,7 @@ def init_bocd_state(num_timesteps, params_init):
     log_joint = jnp.zeros(num_timesteps)
     M = len(params_init)
     
-    params_init = params_init.to_array()
+    params_init = params_init.array
     params = jnp.zeros((num_timesteps, M))
     params = params.at[0].set(params_init)
 
@@ -133,7 +144,10 @@ def reconstruct_tril_array(x, T):
 
 
 def log_prob_transition(run_length, run_length_prev):
-    ...
+    cond1 = run_length == run_length_prev + 1
+    cond2 = run_length == 0
+
+    return cond1 * jnp.log(0.7) + cond2 * jnp.log(0.3)
 
 
 def _step(bocs_state, x):
