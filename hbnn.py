@@ -60,9 +60,8 @@ def build_sigma_tree(params, treedef):
     Build a tree of parameters that satisfy
     the HBNN conditions and is flax-compatible
     """
-    n_layers = len(params)
-    map_array = jnp.ones((1, 1, n_layers, 2))
-    params_sigma_tree = jnp.einsum("kl,ijkl->ijkl", params, map_array)
+    
+    params_sigma_tree = jnp.expand_dims(params, 0) # (1, n_layers, 2)
     params_sigma_tree = jax.tree_util.build_tree(treedef, params_sigma_tree)
 
     return params_sigma_tree
@@ -112,17 +111,17 @@ def hierarchical_log_joint(params, X, y, model_treedef, model):
     task_tree = params["task"]
     sigma_tree = build_sigma_tree(params["noise"], model_treedef)
 
-    model_params = jax.tree_map(lambda mu, task, sigma: mu + sigma * task, shared_tree, task_tree, sigma_tree)
+    model_params = jax.tree.map(lambda mu, task, sigma: mu + sigma * task, shared_tree, task_tree, sigma_tree)
 
     # ** log-likelihood for all tasks **
     log_likelihood_collection = vmap_log_likelihood(model_params, X, y, model).sum()
 
     # ** log priors **
     # Tasks priors
-    log_task_prior = jax.tree_map(distrax.Normal(0, 1).log_prob, task_tree)
+    log_task_prior = jax.tree.map(distrax.Normal(0.0, 1.0).log_prob, task_tree)
     log_task_prior = ravel_pytree(log_task_prior)[0].sum()
     # Global prior
-    log_shared_prior = jax.tree_map(distrax.Normal(0, 1).log_prob, shared_tree)
+    log_shared_prior = jax.tree.map(distrax.Normal(0.0, 1.0).log_prob, shared_tree)
     log_shared_prior = ravel_pytree(log_shared_prior)[0].sum()
     # Sigma-layered prior
     log_sigma_prior = HalfNormal.log_prob(params["noise"]).sum()
@@ -151,7 +150,7 @@ def build_model_params(params, treedef):
     task_tree = params["task"]
     sigma_tree = build_sigma_tree(params["noise"], treedef)
 
-    model_params = jax.tree_map(lambda mu, task, sigma: mu + sigma * task,
+    model_params = jax.tree.map(lambda mu, task, sigma: mu + sigma * task,
                                 shared_tree, task_tree, sigma_tree)
     return model_params
 
